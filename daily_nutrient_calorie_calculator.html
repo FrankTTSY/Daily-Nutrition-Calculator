@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เครื่องคำนวณสารอาหารและพลังงานประจำวัน (Daily Nutrition & Calorie Calculator)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Fonts (Kanit) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <script>
+        // กำหนด URL ของ API ฝั่ง PHP (XAMPP)
+        const API_URL = 'http://localhost/nutrition-app/api.php';
+
+        // บันทึกข้อมูลลง MySQL ผ่าน PHP API
+        window.saveToCloudHistory = async function(record) {
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(record)
+                });
+                const resData = await response.json();
+                if (resData.status === 'success') {
+                    await loadHistoryFromCloud();
+                } else {
+                    saveToLocalStorage(record);
+                }
+            } catch (e) {
+                console.error("Error saving to MySQL:", e);
+                saveToLocalStorage(record);
+            }
+        };
+
+        // โหลดข้อมูลประวัติจาก MySQL ผ่าน PHP API
+        window.loadHistoryFromCloud = async function() {
+            try {
+                const response = await fetch(API_URL);
+                const history = await response.json();
+                
+                if (Array.isArray(history)) {
+                    window.cloudHistoryData = history;
+                    renderHistory(history);
+                } else {
+                    renderHistory();
+                }
+            } catch (e) {
+                console.error("Error loading history from MySQL:", e);
+                renderHistory();
+            }
+        };
+
+        // ลบข้อมูลประวัติจาก MySQL
+        window.deleteCloudRecord = async function(id) {
+            try {
+                const response = await fetch(`${API_URL}?id=${id}`, {
+                    method: 'DELETE'
+                });
+                const resData = await response.json();
+                if (resData.status === 'success') {
+                    await loadHistoryFromCloud();
+                    return;
+                }
+            } catch (e) {
+                console.error("Error deleting record from MySQL:", e);
+            }
+            deleteHistoryRecord(id);
+        };
+
+        // ล้างประวัติทั้งหมดใน MySQL
+        window.clearAllMySQLHistory = async function() {
+            try {
+                const response = await fetch(`${API_URL}?action=clear_all`, {
+                    method: 'DELETE'
+                });
+                const resData = await response.json();
+                if (resData.status === 'success') {
+                    await loadHistoryFromCloud();
+                    return;
+                }
+            } catch (e) {
+                console.error("Error clearing MySQL history:", e);
+            }
+            localStorage.removeItem("nutritionHistory");
+            renderHistory();
+        };
+    </script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Kanit', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            background-color: #f8fafc;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(226, 232, 240, 0.8);
+        }
+    </style>
+</head>
+<body class="text-slate-800 min-h-screen pb-12">
+
+    <!-- Top Navbar -->
+    <header class="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 text-white shadow-lg py-6 px-4 mb-8">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-3 bg-white/20 rounded-2xl backdrop-blur-md">
+                    <i data-lucide="utensils" class="w-8 h-8"></i>
+                </div>
+                <div>
+                    <h1 class="text-2xl md:text-3xl font-bold tracking-tight">คำนวณแคลอรีและสารอาหารประจำวัน</h1>
+                    <p class="text-emerald-100 text-sm font-light">Daily Nutrition Calculator</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 bg-white/10 px-4 py-2 rounded-full text-xs md:text-sm font-medium border border-white/20">
+                <i data-lucide="shield-check" class="w-4 h-4 text-emerald-300"></i>
+                <span>สูตรมาตรฐานสากล (Mifflin-St Jeor)</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-6xl mx-auto px-4 grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        <!-- FORM SECTION (Left - 5 cols) -->
+        <section class="lg:col-span-5" id="inputFormSection">
+            <div class="glass-card rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-300">
+                <div class="flex items-center justify-between mb-6 pb-3 border-b border-slate-100">
+                    <h2 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                        <i data-lucide="user-check" class="text-emerald-600 w-5 h-5"></i>
+                        ข้อมูลของคุณ
+                    </h2>
+                    <span class="text-xs text-slate-400 font-light">* กรอกข้อมูลเพื่อคำนวณ</span>
+                </div>
+
+                <form id="nutritionForm" class="space-y-5">
+                    
+                    <!-- ชื่อผู้ใช้งาน -->
+                    <div>
+                        <label for="userName" class="block text-sm font-medium text-slate-700 mb-1">
+                            ชื่อของคุณ
+                        </label>
+                        <div class="relative">
+                            <i data-lucide="user" class="w-4 h-4 text-slate-400 absolute left-3 top-3.5"></i>
+                            <input type="text" id="userName" required placeholder="ใส่ชื่อเล่นหรือชื่อของคุณ"
+                                class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm">
+                        </div>
+                    </div>
+
+                    <!-- เพศ -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">เพศ</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <label class="cursor-pointer">
+                                <input type="radio" name="gender" value="male" checked class="peer sr-only">
+                                <div class="flex items-center justify-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:text-emerald-700 font-medium transition-all text-sm">
+                                    <i data-lucide="mars" class="w-4 h-4"></i> ชาย
+                                </div>
+                            </label>
+                            <label class="cursor-pointer">
+                                <input type="radio" name="gender" value="female" class="peer sr-only">
+                                <div class="flex items-center justify-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50 peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:text-emerald-700 font-medium transition-all text-sm">
+                                    <i data-lucide="venus" class="w-4 h-4"></i> หญิง
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- อายุ / น้ำหนัก / ส่วนสูง -->
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label for="age" class="block text-xs font-medium text-slate-700 mb-1">อายุ (ปี)</label>
+                            <input type="number" id="age" required min="10" max="120" value="25"
+                                class="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm">
+                        </div>
+                        <div>
+                            <label for="weight" class="block text-xs font-medium text-slate-700 mb-1">น้ำหนัก (กก.)</label>
+                            <input type="number" id="weight" required min="20" max="300" step="0.1" value="65"
+                                class="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm">
+                        </div>
+                        <div>
+                            <label for="height" class="block text-xs font-medium text-slate-700 mb-1">ส่วนสูง (ซม.)</label>
+                            <input type="number" id="height" required min="80" max="250" value="170"
+                                class="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm">
+                        </div>
+                    </div>
+
+                    <!-- ระดับกิจกรรม -->
+                    <div>
+                        <label for="activity" class="block text-sm font-medium text-slate-700 mb-1">การออกกำลังกาย</label>
+                        <select id="activity" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm bg-white">
+                            <option value="1.2">น้อยมาก / นั่งทำงานเป็นหลัก</option>
+                            <option value="1.375">เบาๆ (1-3 วัน/สัปดาห์)</option>
+                            <option value="1.55" selected>ปานกลาง (3-5 วัน/สัปดาห์)</option>
+                            <option value="1.725">หนัก (6-7 วัน/สัปดาห์)</option>
+                            <option value="1.9">หนักมาก / นักกีฬา</option>
+                        </select>
+                    </div>
+
+                    <!-- เป้าหมาย -->
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-2">เป้าหมาย</label>
+                        <div class="space-y-2">
+                            <label class="cursor-pointer block">
+                                <input type="radio" name="goal" value="lose" class="peer sr-only">
+                                <div class="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:text-emerald-700 text-sm transition-all">
+                                    <div class="flex items-center gap-2">
+                                        <i data-lucide="trending-down" class="w-4 h-4 text-emerald-600"></i>
+                                        <span class="font-medium">ลดน้ำหนัก</span>
+                                    </div>
+                                    <span class="text-xs text-slate-500 peer-checked:text-emerald-600">-20% แคลอรี</span>
+                                </div>
+                            </label>
+                            <label class="cursor-pointer block">
+                                <input type="radio" name="goal" value="maintain" checked class="peer sr-only">
+                                <div class="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:text-emerald-700 text-sm transition-all">
+                                    <div class="flex items-center gap-2">
+                                        <i data-lucide="minus" class="w-4 h-4 text-emerald-600"></i>
+                                        <span class="font-medium">รักษาน้ำหนัก</span>
+                                    </div>
+                                    <span class="text-xs text-slate-500 peer-checked:text-emerald-600">ตามการใช้พลังงาน</span>
+                                </div>
+                            </label>
+                            <label class="cursor-pointer block">
+                                <input type="radio" name="goal" value="gain" class="peer sr-only">
+                                <div class="flex items-center justify-between p-3 rounded-xl border border-slate-200 bg-slate-50 peer-checked:bg-emerald-50 peer-checked:border-emerald-500 peer-checked:text-emerald-700 text-sm transition-all">
+                                    <div class="flex items-center gap-2">
+                                        <i data-lucide="trending-up" class="w-4 h-4 text-emerald-600"></i>
+                                        <span class="font-medium">เพิ่มกล้ามเนื้อ</span>
+                                    </div>
+                                    <span class="text-xs text-slate-500 peer-checked:text-emerald-600">+15% แคลอรี</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <button type="submit" 
+                        class="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-md shadow-emerald-200 hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2">
+                        <i data-lucide="calculator" class="w-5 h-5"></i>
+                        คำนวณสารอาหาร
+                    </button>
+                </form>
+            </div>
+        </section>
+
+        <!-- RESULTS SECTION (Right - 7 cols) -->
+        <section class="lg:col-span-7 space-y-6">
+
+            <!-- Personalized Greeting Banner -->
+            <div id="greetingBanner" class="glass-card rounded-2xl p-5 bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-100 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg shadow-sm" id="userInitial">
+                        คุณ
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                            สวัสดี <span id="displayName" class="text-emerald-600">คุณผู้ใช้งาน</span>
+                        </h3>
+                        <p class="text-xs text-slate-500" id="displaySubtitle">สัดส่วนพลังงานและสารอาหารที่แนะนำสำหรับคุณ</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="openExternalView()" class="text-xs text-emerald-700 hover:text-emerald-800 font-medium px-3 py-1.5 bg-white rounded-lg border border-emerald-200 shadow-sm transition-all flex items-center gap-1.5">
+                        <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+
+                    </button>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- BMR -->
+                <div class="glass-card rounded-2xl p-4 shadow-sm">
+                    <div class="text-slate-500 text-xs font-medium mb-1 flex items-center gap-1">
+                        <i data-lucide="heart-pulse" class="w-3.5 h-3.5 text-rose-500"></i> พลังงานขั้นต่ำ (BMR)
+                    </div>
+                    <div class="text-2xl font-bold text-slate-800" id="resBMR">0</div>
+                    <div class="text-[11px] text-slate-400 mt-1">เผาผลาญขณะอยู่นิ่งๆ</div>
+                </div>
+
+                <!-- TDEE -->
+                <div class="glass-card rounded-2xl p-4 shadow-sm">
+                    <div class="text-slate-500 text-xs font-medium mb-1 flex items-center gap-1">
+                        <i data-lucide="zap" class="w-3.5 h-3.5 text-amber-500"></i> พลังงานที่ใช้จริง (TDEE)
+                    </div>
+                    <div class="text-2xl font-bold text-slate-800" id="resTDEE">0</div>
+                    <div class="text-[11px] text-slate-400 mt-1">เผาผลาญรวมตามกิจกรรม</div>
+                </div>
+
+                <!-- Target Calories -->
+                <div class="glass-card rounded-2xl p-4 shadow-sm bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
+                    <div class="text-emerald-100 text-xs font-medium mb-1 flex items-center gap-1">
+                        <i data-lucide="target" class="w-3.5 h-3.5 text-white"></i> แคลอรีเป้าหมาย
+                    </div>
+                    <div class="text-2xl font-bold" id="resTargetCal">0 <span class="text-xs font-normal">kcal/วัน</span></div>
+                    <div class="text-[11px] text-emerald-100/90 mt-1" id="resGoalBadge">เพื่อรักษาน้ำหนักตัว</div>
+                </div>
+            </div>
+
+            <!-- Macronutrients Breakdown Card -->
+            <div class="glass-card rounded-2xl p-6 shadow-sm">
+                <h3 class="text-lg font-bold text-slate-800 mb-4 flex items-center justify-between">
+                    <span class="flex items-center gap-2">
+                        <i data-lucide="pie-chart" class="text-emerald-600 w-5 h-5"></i>
+                        สารอาหารที่ต้องได้รับต่อวัน
+                    </span>
+                </h3>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+                    <!-- Donut Chart -->
+                    <div class="relative flex justify-center items-center h-48">
+                        <canvas id="macroChart"></canvas>
+                    </div>
+
+                    <!-- Detailed Macro Metrics -->
+                    <div class="space-y-4">
+                        <!-- Protein -->
+                        <div class="bg-red-50/60 p-3 rounded-xl border border-red-100">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-xs font-semibold text-red-700 flex items-center gap-1">
+                                    <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span> โปรตีน (Protein)
+                                </span>
+                                <span class="text-xs font-bold text-red-700" id="proteinGrams">0 g</span>
+                            </div>
+                            <div class="w-full bg-red-200/50 rounded-full h-2 mb-1">
+                                <div id="proteinBar" class="bg-red-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                            </div>
+                            <div class="flex justify-between text-[11px] text-red-600/80">
+                                <span id="proteinCal">0 kcal</span>
+                                <span id="proteinPercent">0%</span>
+                            </div>
+                        </div>
+
+                        <!-- Carbs -->
+                        <div class="bg-blue-50/60 p-3 rounded-xl border border-blue-100">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-xs font-semibold text-blue-700 flex items-center gap-1">
+                                    <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> คาร์โบไฮเดรต (Carbs)
+                                </span>
+                                <span class="text-xs font-bold text-blue-700" id="carbsGrams">0 g</span>
+                            </div>
+                            <div class="w-full bg-blue-200/50 rounded-full h-2 mb-1">
+                                <div id="carbsBar" class="bg-blue-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                            </div>
+                            <div class="flex justify-between text-[11px] text-blue-600/80">
+                                <span id="carbsCal">0 kcal</span>
+                                <span id="carbsPercent">0%</span>
+                            </div>
+                        </div>
+
+                        <!-- Fat -->
+                        <div class="bg-amber-50/60 p-3 rounded-xl border border-amber-100">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-xs font-semibold text-amber-700 flex items-center gap-1">
+                                    <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> ไขมัน (Fat)
+                                </span>
+                                <span class="text-xs font-bold text-amber-700" id="fatGrams">0 g</span>
+                            </div>
+                            <div class="w-full bg-amber-200/50 rounded-full h-2 mb-1">
+                                <div id="fatBar" class="bg-amber-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                            </div>
+                            <div class="flex justify-between text-[11px] text-amber-600/80">
+                                <span id="fatCal">0 kcal</span>
+                                <span id="fatPercent">0%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Meal Suggestions Card -->
+            <div class="glass-card rounded-2xl p-6 shadow-sm">
+                <h3 class="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                    <i data-lucide="utensils-crossed" class="text-emerald-600 w-5 h-5"></i>
+                    ตัวอย่างเมนูอาหาร (แบ่ง 3 มื้อ)
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="mealSuggestions">
+                    <!-- Dynamic Meals Inserted via JS -->
+                </div>
+            </div>
+
+            <!-- Numerical Methods Section -->
+            <div class="glass-card rounded-2xl p-6 shadow-sm border border-indigo-100 bg-gradient-to-br from-white via-slate-50 to-indigo-50/30">
+                <div class="flex items-center justify-between mb-4 border-b border-indigo-100 pb-3">
+                    <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <i data-lucide="target" class="text-indigo-600 w-5 h-5"></i>
+                        คำนวณเป้าหมาย
+                    </h3>
+                    <span class="text-xs bg-indigo-100 text-indigo-700 font-medium px-2.5 py-1 rounded-full">เครื่องมือคำนวณขั้นสูง</span>
+                </div>
+
+                <div class="space-y-4 text-xs text-slate-600">
+                    <!-- Method 1: Newton-Raphson -->
+                    <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs">
+                        <div class="font-semibold text-slate-800 text-sm mb-1 flex items-center justify-between">
+                            <span class="flex items-center gap-1.5 text-indigo-700">
+                                1. คำนวณระยะเวลาถึงเป้าหมาย
+                            </span>
+                        </div>
+                        <p class="text-slate-500 mb-3">คำนวณว่าต้องใช้เวลาประมาณกี่สัปดาห์จึงจะบรรลุเป้าหมายน้ำหนักที่ตั้งไว้</p>
+                        
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                            <div>
+                                <label for="numTargetWeight" class="block font-medium mb-1">น้ำหนักเป้าหมาย (กก.):</label>
+                                <input type="number" id="numTargetWeight" value="60" step="0.5" class="w-full p-2 rounded-lg border border-slate-200 text-xs">
+                            </div>
+                            <div>
+                                <label for="numDeficit" class="block font-medium mb-1">ปรับแคลอรี (+/- kcal/วัน):</label>
+                                <input type="number" id="numDeficit" value="-500" step="50" class="w-full p-2 rounded-lg border border-slate-200 text-xs">
+                            </div>
+                        </div>
+
+                        <button onclick="calculateNewtonRaphson()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-1">
+                            <i data-lucide="play" class="w-3.5 h-3.5"></i> คำนวณระยะเวลา
+                        </button>
+                        <div id="newtonResult" class="mt-2 text-indigo-900 bg-indigo-50/60 p-2.5 rounded-lg border border-indigo-100 font-mono text-[11px] hidden"></div>
+                    </div>
+
+                    <!-- Method 2: Trapezoidal Rule Integration -->
+                    <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-xs">
+                        <div class="font-semibold text-slate-800 text-sm mb-1 flex items-center gap-1.5 text-teal-700">
+                            2. ประเมินพลังงานสะสม 30 วัน
+                        </div>
+                        <p class="text-slate-500 mb-2">คำนวณผลรวมพลังงานที่สะสมหรือลดลงสุทธิในระยะเวลา 1 เดือน</p>
+                        <button onclick="calculateTrapezoidalIntegration()" class="w-full py-2 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-1">
+                            <i data-lucide="calculator" class="w-3.5 h-3.5"></i> ประเมินสะสม 30 วัน
+                        </button>
+                        <div id="integrationResult" class="mt-2 text-teal-900 bg-teal-50/60 p-2.5 rounded-lg border border-teal-100 font-mono text-[11px] hidden"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- History Table Card -->
+            <div class="glass-card rounded-2xl p-6 shadow-sm">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                    <div>
+                        <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                            <i data-lucide="history" class="text-emerald-600 w-5 h-5"></i>
+                            ประวัติการคำนวณ
+                        </h3>
+                        
+                    </div>
+                    <button id="clearHistoryBtn" class="text-xs text-rose-500 hover:text-rose-700 font-medium flex items-center gap-1 transition-colors self-start sm:self-auto">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> ล้างประวัติทั้งหมด
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead>
+                            <tr class="bg-slate-100 text-slate-600 border-b border-slate-200">
+                                <th class="p-2.5 rounded-l-lg">ชื่อ</th>
+                                <th class="p-2.5">วันที่</th>
+                                <th class="p-2.5">เป้าหมาย</th>
+                                <th class="p-2.5">แคลอรี</th>
+                                <th class="p-2.5">โปรตีน/คาร์บ/ไขมัน</th>
+                                <th class="p-2.5 rounded-r-lg">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTableBody" class="divide-y divide-slate-100">
+                            <!-- Dynamic history rows -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="max-w-6xl mx-auto px-4 mt-12 text-center text-xs text-slate-400">
+        <p>© 2026 Daily Nutrition Calculator. ออกแบบเพื่อส่งเสริมสุขภาพโภชนาการที่ดีอย่างยั่งยืน</p>
+    </footer>
+
+    <!-- Logic Script -->
+    <script>
+        let macroChartInstance = null;
+        let currentResultData = null;
+
+        document.addEventListener("DOMContentLoaded", () => {
+    lucide.createIcons();
+
+    const form = document.getElementById("nutritionForm");
+    form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        calculateAndDisplay(true); // ส่งค่า true เพื่อสั่งให้บันทึกประวัติเฉพาะตอนกดปุ่มคำนวณ
+    });
+
+    document.getElementById("clearHistoryBtn").addEventListener("click", () => {
+        if (confirm("คุณต้องการลบประวัติการคำนวณทั้งหมดหรือไม่?")) {
+            window.clearAllMySQLHistory();
+        }
+    });
+
+    // โหลดประวัติครั้งแรกจาก MySQL
+    window.loadHistoryFromCloud();
+
+    // คำนวณแสดงผลครั้งแรกตอนเข้าเว็บ (ส่ง false เพื่อไม่ให้บันทึกซ้ำซ้อน)
+    calculateAndDisplay(false); 
+});
+
+        function scrollToForm() {
+            document.getElementById("inputFormSection").scrollIntoView({ behavior: 'smooth' });
+            document.getElementById("userName").focus();
+        }
+
+        function calculateAndDisplay(shouldSave = false) {
+    // Inputs
+    const userNameInput = document.getElementById("userName").value.trim();
+    const userName = userNameInput || "คุณผู้ใช้งาน";
+    const gender = document.querySelector('input[name="gender"]:checked').value;
+    const age = parseFloat(document.getElementById("age").value) || 25;
+    const weight = parseFloat(document.getElementById("weight").value) || 65;
+    const height = parseFloat(document.getElementById("height").value) || 170;
+    const activity = parseFloat(document.getElementById("activity").value);
+    const goal = document.querySelector('input[name="goal"]:checked').value;
+
+    // BMR (Mifflin-St Jeor)
+    let bmr = (10 * weight) + (6.25 * height) - (5 * age);
+    bmr += (gender === "male") ? 5 : -161;
+
+    // TDEE
+    const tdee = bmr * activity;
+
+    // Target Calories & Macro Ratios
+    let targetCalories = tdee;
+    let goalText = "เพื่อรักษาน้ำหนักตัว";
+    let pRatio = 0.25, cRatio = 0.50, fRatio = 0.25;
+
+    if (goal === "lose") {
+        targetCalories = tdee * 0.80;
+        goalText = "เพื่อลดน้ำหนัก / ลดไขมัน";
+        pRatio = 0.35;
+        cRatio = 0.40;
+        fRatio = 0.25;
+    } else if (goal === "gain") {
+        targetCalories = tdee * 1.15;
+        goalText = "เพื่อเพิ่มกล้ามเนื้อ";
+        pRatio = 0.25;
+        cRatio = 0.55;
+        fRatio = 0.20;
+    }
+
+    // Macro Calculations
+    const proteinCal = targetCalories * pRatio;
+    const carbsCal = targetCalories * cRatio;
+    const fatCal = targetCalories * fRatio;
+
+    const proteinGrams = proteinCal / 4;
+    const carbsGrams = carbsCal / 4;
+    const fatGrams = fatCal / 9;
+
+    // Store global state
+    currentResultData = {
+        name: userName,
+        gender: gender === "male" ? "ชาย" : "หญิง",
+        age,
+        weight,
+        height,
+        bmr: Math.round(bmr),
+        tdee: Math.round(tdee),
+        targetCalories: Math.round(targetCalories),
+        goalText,
+        proteinGrams: Math.round(proteinGrams),
+        carbsGrams: Math.round(carbsGrams),
+        fatGrams: Math.round(fatGrams),
+        date: new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute:'2-digit' })
+    };
+
+    // Personal Greeting Update
+    document.getElementById("displayName").textContent = userName;
+    document.getElementById("userInitial").textContent = userName.charAt(0).toUpperCase();
+
+    // Results Update
+    document.getElementById("resBMR").textContent = Math.round(bmr).toLocaleString();
+    document.getElementById("resTDEE").textContent = Math.round(tdee).toLocaleString();
+    document.getElementById("resTargetCal").innerHTML = `${Math.round(targetCalories).toLocaleString()} <span class="text-xs font-normal">kcal/วัน</span>`;
+    document.getElementById("resGoalBadge").textContent = goalText;
+
+    // Metrics UI
+    document.getElementById("proteinGrams").textContent = `${Math.round(proteinGrams)} g`;
+    document.getElementById("proteinCal").textContent = `${Math.round(proteinCal)} kcal`;
+    document.getElementById("proteinPercent").textContent = `${Math.round(pRatio * 100)}%`;
+    document.getElementById("proteinBar").style.width = `${pRatio * 100}%`;
+
+    document.getElementById("carbsGrams").textContent = `${Math.round(carbsGrams)} g`;
+    document.getElementById("carbsCal").textContent = `${Math.round(carbsCal)} kcal`;
+    document.getElementById("carbsPercent").textContent = `${Math.round(cRatio * 100)}%`;
+    document.getElementById("carbsBar").style.width = `${cRatio * 100}%`;
+
+    document.getElementById("fatGrams").textContent = `${Math.round(fatGrams)} g`;
+    document.getElementById("fatCal").textContent = `${Math.round(fatCal)} kcal`;
+    document.getElementById("fatPercent").textContent = `${Math.round(fRatio * 100)}%`;
+    document.getElementById("fatBar").style.width = `${fRatio * 100}%`;
+
+    // Render Charts & Meal Suggestions
+    renderMacroChart(pRatio * 100, cRatio * 100, fRatio * 100);
+    renderMealPlan(targetCalories, proteinGrams, carbsGrams, fatGrams);
+
+    // บันทึกลง MySQL เฉพาะเมื่อมีการกดปุ่มคำนวณ (shouldSave เป็น true) เท่านั้น
+    if (shouldSave) {
+        const newRecord = {
+            name: userName,
+            date: currentResultData.date,
+            goal: goalText,
+            calories: Math.round(targetCalories),
+            p: Math.round(proteinGrams),
+            c: Math.round(carbsGrams),
+            f: Math.round(fatGrams)
+        };
+
+        window.saveToCloudHistory(newRecord);
+    }
+}
+
+        // Numerical Methods Implementation
+        function calculateNewtonRaphson() {
+            const currentW = currentResultData ? currentResultData.weight : parseFloat(document.getElementById("weight").value);
+            const targetW = parseFloat(document.getElementById("numTargetWeight").value);
+            const calorieDeficitPerDay = parseFloat(document.getElementById("numDeficit").value);
+
+            if (!targetW || isNaN(targetW)) return;
+
+            const k = (calorieDeficitPerDay * 7) / 7700;
+
+            if (Math.abs(k) < 0.0001) {
+                const resDiv = document.getElementById("newtonResult");
+                resDiv.classList.remove("hidden");
+                resDiv.innerHTML = `⚠️ อัตราการเปลี่ยนพลังงานเป็น 0 ไม่สามารถคำนวณได้`;
+                return;
+            }
+
+            let t = 1.0;
+            let iter = 0;
+            const maxIter = 100;
+            const tol = 1e-5;
+
+            while (iter < maxIter) {
+                let f_val = (currentW + k * t) - targetW;
+                let f_prime = k;
+                let t_next = t - f_val / f_prime;
+
+                if (Math.abs(t_next - t) < tol) {
+                    t = t_next;
+                    break;
+                }
+                t = t_next;
+                iter++;
+            }
+
+            const resDiv = document.getElementById("newtonResult");
+            resDiv.classList.remove("hidden");
+            if (t < 0) {
+                resDiv.innerHTML = `⚠️ การปรับแคลอรีไม่สอดคล้องกับเป้าหมายน้ำหนัก`;
+            } else {
+                resDiv.innerHTML = `
+                    <strong>ผลลัพธ์:</strong><br/>
+                    • ระยะเวลาที่ต้องใช้ประมาณ: <strong>${t.toFixed(2)} สัปดาห์</strong> (~${Math.round(t * 7)} วัน)
+                `;
+            }
+        }
+
+        function calculateTrapezoidalIntegration() {
+            if (!currentResultData) return;
+            const tdee = currentResultData.tdee;
+            const targetCal = currentResultData.targetCalories;
+            const dailyNet = targetCal - tdee;
+
+            const n = 30;
+            const h = 1;
+            let sum = 0;
+
+            for (let i = 0; i <= n; i++) {
+                let fx = dailyNet * (1 + 0.05 * Math.sin(i * 0.5));
+                if (i === 0 || i === n) {
+                    sum += fx;
+                } else {
+                    sum += 2 * fx;
+                }
+            }
+
+            const totalKcalIntegrated = (h / 2) * sum;
+            const projectedKgChange = totalKcalIntegrated / 7700;
+
+            const resDiv = document.getElementById("integrationResult");
+            resDiv.classList.remove("hidden");
+            resDiv.innerHTML = `
+                <strong>ผลลัพธ์:</strong><br/>
+                • พลังงานสุทธิสะสมรวม: <strong>${Math.round(totalKcalIntegrated).toLocaleString()} kcal</strong><br/>
+                • น้ำหนักที่คาดว่าจะเปลี่ยนแปลง: <strong>${projectedKgChange > 0 ? '+' : ''}${projectedKgChange.toFixed(2)} กก.</strong>
+            `;
+        }
+
+        function openExternalView(itemData = null) {
+            const data = itemData || currentResultData;
+            if (!data) return;
+
+            const newWin = window.open("", "_blank");
+            if (!newWin) {
+                alert("โปรดอนุญาตให้เปิด Pop-up ในเบราว์เซอร์ของคุณ");
+                return;
+            }
+
+            const htmlContent = `
+                <!DOCTYPE html>
+                <html lang="th">
+                <head>
+                    <meta charset="UTF-8">
+                    <title>รายงานสารอาหารประจำวัน - ${data.name}</title>
+                    <script src="https://cdn.tailwindcss.com"><\/script>
+                    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+                    <style>
+                        body { font-family: 'Kanit', sans-serif; background: #f8fafc; }
+                        @media print { .no-print { display: none; } }
+                    </style>
+                </head>
+                <body class="p-6 text-slate-800">
+                    <div class="max-w-2xl mx-auto bg-white border border-slate-200 rounded-3xl p-8 shadow-xl">
+                        <div class="flex justify-between items-start border-b border-slate-100 pb-6 mb-6">
+                            <div>
+                                <h1 class="text-2xl font-bold text-emerald-600">รายงานสารอาหารและพลังงานประจำวัน</h1>
+                                <p class="text-sm text-slate-400">Daily Nutrition Report</p>
+                            </div>
+                            <button onclick="window.print()" class="no-print bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-emerald-700">
+                                🖨️ พิมพ์ / พิมพ์เป็น PDF
+                            </button>
+                        </div>
+
+                        <div class="bg-slate-50 rounded-2xl p-4 mb-6 grid grid-cols-2 gap-4 text-sm">
+                            <div><strong class="text-slate-500">ชื่อผู้ใช้งาน:</strong> ${data.name}</div>
+                            <div><strong class="text-slate-500">วันที่คำนวณ:</strong> ${data.date}</div>
+                            <div><strong class="text-slate-500">เป้าหมาย:</strong> ${data.goalText || data.goal}</div>
+                            <div><strong class="text-slate-500">พลังงานเป้าหมาย:</strong> <span class="text-emerald-600 font-bold">${data.targetCalories || data.calories} kcal</span></div>
+                        </div>
+
+                        <h2 class="text-lg font-bold mb-3 text-slate-800">สัดส่วนสารอาหารหลักที่แนะนำ (Macronutrients)</h2>
+                        <div class="grid grid-cols-3 gap-4 mb-8">
+                            <div class="bg-red-50 border border-red-100 p-4 rounded-2xl text-center">
+                                <div class="text-xs text-red-500 font-medium">โปรตีน</div>
+                                <div class="text-2xl font-bold text-red-600">${data.proteinGrams || data.p} g</div>
+                            </div>
+                            <div class="bg-blue-50 border border-blue-100 p-4 rounded-2xl text-center">
+                                <div class="text-xs text-blue-500 font-medium">คาร์โบไฮเดรต</div>
+                                <div class="text-2xl font-bold text-blue-600">${data.carbsGrams || data.c} g</div>
+                            </div>
+                            <div class="bg-amber-50 border border-amber-100 p-4 rounded-2xl text-center">
+                                <div class="text-xs text-amber-500 font-medium">ไขมัน</div>
+                                <div class="text-2xl font-bold text-amber-600">${data.fatGrams || data.f} g</div>
+                            </div>
+                        </div>
+
+                        <div class="text-center text-xs text-slate-400 pt-6 border-t border-slate-100">
+                            Daily Nutrition Calculator • คำนวณด้วยสูตรมาตรฐานสากล Mifflin-St Jeor
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `;
+
+            newWin.document.write(htmlContent);
+            newWin.document.close();
+        }
+
+        function renderMacroChart(pPct, cPct, fPct) {
+            const ctx = document.getElementById("macroChart").getContext("2d");
+
+            if (macroChartInstance) {
+                macroChartInstance.destroy();
+            }
+
+            macroChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['โปรตีน', 'คาร์โบไฮเดรต', 'ไขมัน'],
+                    datasets: [{
+                        data: [pPct, cPct, fPct],
+                        backgroundColor: ['#ef4444', '#3b82f6', '#f59e0b'],
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    cutout: '70%'
+                }
+            });
+        }
+
+        function renderMealPlan(totalCal, p, c, f) {
+            const mCal = Math.round(totalCal / 3);
+            const mP = Math.round(p / 3);
+            const mC = Math.round(c / 3);
+            const mF = Math.round(f / 3);
+
+            const container = document.getElementById("mealSuggestions");
+            container.innerHTML = `
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2">
+                    <div class="flex items-center gap-2 text-slate-700 font-semibold text-sm">
+                        <i data-lucide="sun" class="w-4 h-4 text-amber-500"></i> มื้อเช้า (~${mCal} kcal)
+                    </div>
+                    <p class="text-xs text-slate-500 leading-relaxed">
+                        ไข่ต้ม 2 ฟอง + ขนมปังโฮลวีต 2 แผ่น + ทูน่า/อกไก่ + นมถั่วเหลืองหวานน้อย
+                    </p>
+                    <div class="text-[11px] text-emerald-600 font-medium pt-1">
+                        เป้าหมาย: P ~${mP}g | C ~${mC}g | F ~${mF}g
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2">
+                    <div class="flex items-center gap-2 text-slate-700 font-semibold text-sm">
+                        <i data-lucide="sun-medium" class="w-4 h-4 text-emerald-500"></i> มื้อเที่ยง (~${mCal} kcal)
+                    </div>
+                    <p class="text-xs text-slate-500 leading-relaxed">
+                        ข้าวกล้อง 1.5 ทัพพี + อกไก่ย่าง/หมูสันใน + ผัดผักน้ำมันน้อย + ผลไม้สด 1 ส่วน
+                    </p>
+                    <div class="text-[11px] text-emerald-600 font-medium pt-1">
+                        เป้าหมาย: P ~${mP}g | C ~${mC}g | F ~${mF}g
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2">
+                    <div class="flex items-center gap-2 text-slate-700 font-semibold text-sm">
+                        <i data-lucide="moon" class="w-4 h-4 text-indigo-500"></i> มื้อเย็น (~${mCal} kcal)
+                    </div>
+                    <p class="text-xs text-slate-500 leading-relaxed">
+                        สเต๊กปลาแซลมอน/ปลากะพง + มันนึ่ง/ฟักทอง + สลัดผักน้ำใส + อะโวคาโดเล็กน้อย
+                    </p>
+                    <div class="text-[11px] text-emerald-600 font-medium pt-1">
+                        เป้าหมาย: P ~${mP}g | C ~${mC}g | F ~${mF}g
+                    </div>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        function saveToLocalStorage(record) {
+            let history = JSON.parse(localStorage.getItem("nutritionHistory")) || [];
+            history.unshift(record);
+            if (history.length > 10) history = history.slice(0, 10);
+            localStorage.setItem("nutritionHistory", JSON.stringify(history));
+        }
+
+        function deleteHistoryRecord(id) {
+            let history = JSON.parse(localStorage.getItem("nutritionHistory")) || [];
+            history = history.filter(item => item.id !== id);
+            localStorage.setItem("nutritionHistory", JSON.stringify(history));
+            renderHistory();
+        }
+
+        function openHistoryItemExternal(id) {
+            let history = window.cloudHistoryData || JSON.parse(localStorage.getItem("nutritionHistory")) || [];
+            const item = history.find(i => parseInt(i.id) === parseInt(id));
+            if (item) {
+                openExternalView(item);
+            }
+        }
+
+        function renderHistory(customData = null) {
+            const history = customData || window.cloudHistoryData || JSON.parse(localStorage.getItem("nutritionHistory")) || [];
+            const tbody = document.getElementById("historyTableBody");
+
+            if (!tbody) return;
+
+            if (history.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-400 text-xs">ยังไม่มีประวัติการบันทึก</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = history.map(item => `
+                <tr class="hover:bg-slate-50 transition-colors">
+                    <td class="p-2.5 font-medium text-slate-800">${item.name || 'ผู้ใช้'}</td>
+                    <td class="p-2.5 text-slate-500 font-light">${item.date}</td>
+                    <td class="p-2.5 text-slate-700">${item.goal}</td>
+                    <td class="p-2.5 text-emerald-600 font-bold">${item.calories}</td>
+                    <td class="p-2.5 text-slate-600">${item.p}g / ${item.c}g / ${item.f}g</td>
+                    <td class="p-2.5 flex items-center gap-2">
+                        <button onclick="openHistoryItemExternal(${item.id})" title="เปิดดูภายนอก" class="text-emerald-600 hover:text-emerald-800">
+                            <i data-lucide="external-link" class="w-4 h-4"></i>
+                        </button>
+                        <button onclick="window.deleteCloudRecord(${item.id})" title="ลบประวัติ" class="text-rose-500 hover:text-rose-700">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+            lucide.createIcons();
+        }
+    </script>
+</body>
+</html>
