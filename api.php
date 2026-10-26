@@ -8,35 +8,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit(0);
 }
 
-// ข้อมูลการเชื่อมต่อจาก Aiven Cloud MySQL
-$host = "mysql-xxxx-xxxx.aivencloud.com"; // นำ Host จาก Aiven มาใส่
-$port = "12345";                         // นำ Port จาก Aiven มาใส่
-$dbname = "defaultdb";                    // ชื่อ Database บน Aiven
-$user = "avnadmin";                       // Username จาก Aiven
-$pass = "YOUR_AIVEN_PASSWORD";            // Password จาก Aiven
-
+// เชื่อมต่อฐานข้อมูล MySQL ผ่าน PDO
 try {
-    // Aiven บังคับใช้การเชื่อมต่อแบบปลอดภัย SSL
-    $options = [
-        PDO::MYSQL_ATTR_SSL_CA => true,
-        PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => false,
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
-    ];
-    $pdo = new PDO("mysql:host=$host;port=$port;dbname=$dbname;charset=utf8", $user, $pass, $options);
-    
-    // สร้างตารางอัตโนมัติหากยังไม่มีใน Aiven
-    $pdo->exec("CREATE TABLE IF NOT EXISTS nutrition_history (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        date VARCHAR(100) NOT NULL,
-        goal VARCHAR(255) NOT NULL,
-        calories INT NOT NULL,
-        p INT NOT NULL,
-        c INT NOT NULL,
-        f INT NOT NULL
-    )");
+    $pdo = new PDO("mysql:host=localhost;dbname=nutrition_db;charset=utf8", "root", "");
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
-    echo json_encode(["error" => "Connection failed: " . $e->getMessage()]);
+    echo json_encode(["error" => "Database connection failed: " . $e->getMessage()]);
     exit;
 }
 
@@ -56,7 +33,7 @@ if ($method === 'POST') {
             $data['c'] ?? 0,
             $data['f'] ?? 0
         ]);
-        echo json_encode(["status" => "success", "message" => "Saved to Aiven MySQL"]);
+        echo json_encode(["status" => "success", "message" => "Saved successfully"]);
     }
 } 
 // 2. ดึงข้อมูลประวัติ (GET)
